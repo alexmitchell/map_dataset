@@ -1,6 +1,9 @@
 data/
 aoi/
 
+# Ignore anything with 'untracked' in the name
+*untracked*
+
 # Python-generated files
 __pycache__/
 *.py[oc]

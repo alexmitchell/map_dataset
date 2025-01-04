@@ -7,8 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     "ee>=0.2",
     "geemap>=0.35.1",
+    "geopandas>=1.0.1",
     "ipykernel>=6.29.5",
     "pip>=24.3.1",
     "pycrs>=1.0.2",
+    "rasterio>=1.4.3",
     "setuptools>=75.6.0",
 ]

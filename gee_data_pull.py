@@ -6,6 +6,8 @@ import time
 
 # %%
 # Config
+# Note: CRS must be EPSG:4326
+# geemap and ee assume it and do not read the crs from the file
 aoi_path = Path("aoi/greece_aoi.geojson")
 
 gdrive_dirname = "map_dataset_tests"
@@ -18,7 +20,14 @@ ee.Initialize()
 
 # %%
 # Load the aoi
-aoi = geemap.geojson_to_ee(aoi_path.as_posix())
+aoi_ee = geemap.geojson_to_ee(aoi_path.as_posix())
+
+# Display aoi to double check
+map = geemap.Map()
+map.centerObject(aoi_ee, 7)
+map.addLayer(aoi_ee.style(**{'color': 'red', 'width': 2, 'fillColor': '00000000'}), {}, 'AOI')
+map
+
 
 # %%
 # Load landcover data
@@ -35,7 +44,7 @@ landcover_100m_raw = (
 landcover_100m = (
     landcover_100m_raw
     # .unmask(landcover_100m_filled)
-    .clip(aoi)
+    .clip(aoi_ee)
 )
 
 # %%
@@ -49,7 +58,7 @@ dem_proj = dem_30m_ic.first().projection()
 dem_30m = dem_30m_ic.mosaic().setDefaultProjection(dem_proj)
 
 # Fill no data values with 0 and clip to the aoi
-dem_30m = dem_30m.unmask(0).clip(aoi)
+dem_30m = dem_30m.unmask(0).clip(aoi_ee)
 
 # Generate a hillshade
 hillshade = ee.Terrain.hillshade(dem_30m)
@@ -63,7 +72,7 @@ landcover_100m_binary = landcover_100m.neq(200)#.And(landcover_100m.neq(80))
 
 # Polygonize the landcover 100m binary
 landcover_100m_binary_vector = landcover_100m_binary.reduceToVectors(
-    geometry=aoi,
+    geometry=aoi_ee,
     geometryType='polygon',
     scale=100,
     maxPixels=1e13,
@@ -75,7 +84,7 @@ landcover_100m_binary_vector = landcover_100m_binary.reduceToVectors(
 # %%
 # Display all layers
 map = geemap.Map()
-map.centerObject(aoi, 7)
+map.centerObject(aoi_ee, 7)
 # map.addLayer(dem_30m, {'min': 0, 'max': 3000}, 'DEM 30m')
 map.addLayer(hillshade, {}, 'Hillshade')
 
@@ -86,7 +95,7 @@ map.addLayer(landcover_100m_binary, {}, 'Landcover (binary)')
 map.addLayer(landcover_100m_binary_vector, {}, 'Landcover (vector)')
 
 # Display AOI as an empty box
-map.addLayer(aoi.style(**{'color': 'red', 'width': 2, 'fillColor': '00000000'}), {}, 'AOI')
+map.addLayer(aoi_ee.style(**{'color': 'red', 'width': 2, 'fillColor': '00000000'}), {}, 'AOI')
 map
 
 # %%
