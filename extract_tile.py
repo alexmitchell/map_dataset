@@ -11,7 +11,7 @@ import shapely as shp
 import rasterio as rio
 from rasterio import features as rio_features
 
-import training_dataset as td
+import landcover_training_dataset as td
 
 # from importlib import reload
 
