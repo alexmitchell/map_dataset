@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,15 +11,15 @@ from torch.utils.data import Dataset
 
 class BinaryLandcoverDataset(Dataset):
     def __init__(
-            self,
-            aoi_filepath: Path,
-            projected_crs: str,
-            landcover_polygons_filepath: Path,
-            # landcover_lookup_filepath: Path,
-            tile_width_range: tuple[int|float, int|float],
-            tile_raster_size: int = 32,
+        self,
+        aoi_filepath: Path,
+        projected_crs: str,
+        landcover_polygons_filepath: Path,
+        # landcover_lookup_filepath: Path,
+        tile_width_range: tuple[int | float, int | float],
+        tile_raster_size: int = 32,
     ):
-        """ Set up a dataset for binary landcover classification
+        """Set up a dataset for binary landcover classification
 
         Args:
             aoi_filepath:
@@ -83,11 +82,11 @@ class BinaryLandcoverDataset(Dataset):
         return 10**6
 
     def get_random_point_in_polygon(
-            self,
-            target_zone_shp: shp.Polygon,
-            rng: np.random.Generator,
+        self,
+        target_zone_shp: shp.Polygon,
+        rng: np.random.Generator,
     ) -> shp.Point:
-        """ Get a random point inside a polygon
+        """Get a random point inside a polygon
 
         Args:
             target_zone_shp:
@@ -127,7 +126,6 @@ class BinaryLandcoverDataset(Dataset):
         return rand_point
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, float]:
-
         # Set up a random number generator using the index as a seed
         rng = np.random.default_rng(idx)
 
@@ -190,4 +188,3 @@ class BinaryLandcoverDataset(Dataset):
         tile_tensor = torch.tensor(tile_raster, dtype=torch.uint8)
 
         return tile_tensor, land_percent
-
