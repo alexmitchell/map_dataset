@@ -15,3 +15,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Machine learning artifacts
+lightning_logs
+*.ckpt
+*.pt
