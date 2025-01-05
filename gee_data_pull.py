@@ -1,8 +1,9 @@
 # %%
+import time
+from pathlib import Path
+
 import ee
 import geemap
-from pathlib import Path
-import time
 
 # %%
 # Config
@@ -25,17 +26,20 @@ aoi_ee = geemap.geojson_to_ee(aoi_path.as_posix())
 # Display aoi to double check
 map = geemap.Map()
 map.centerObject(aoi_ee, 7)
-map.addLayer(aoi_ee.style(**{'color': 'red', 'width': 2, 'fillColor': '00000000'}), {}, 'AOI')
+map.addLayer(
+    aoi_ee.style(**{"color": "red", "width": 2, "fillColor": "00000000"}),
+    {},
+    "AOI",
+)
 map
 
 
 # %%
 # Load landcover data
 # https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_Landcover_100m_Proba-V-C3_Global
-landcover_100m_raw = (
-    ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019")
-    .select('discrete_classification')
-)
+landcover_100m_raw = ee.Image(
+    "COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019"
+).select("discrete_classification")
 
 # # Make an image where any holes are filled with the nearest value
 # landcover_100m_filled = landcover_100m_raw.focal_mode(radius=2.5)
@@ -52,8 +56,9 @@ landcover_100m = (
 # https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_DEM_GLO30
 dem_30m_ic = ee.ImageCollection("COPERNICUS/DEM/GLO30").select("DEM")
 
-# Mosiac the DEM and fix the projection
-# Note, the GLO30 dataset is a composite that requires reprojection after mosaicking
+# Mosaic the DEM and fix the projection
+# Note, the GLO30 dataset is a composite that requires reprojection after
+# mosaicked
 dem_proj = dem_30m_ic.first().projection()
 dem_30m = dem_30m_ic.mosaic().setDefaultProjection(dem_proj)
 
@@ -68,16 +73,15 @@ hillshade = ee.Terrain.hillshade(dem_30m)
 # Identify land vs not land
 # Not land is ocean (200) or other permanent water bodies (80)
 # For now just exclude ocean because other water bodies mixes marshes and lakes
-landcover_100m_binary = landcover_100m.neq(200)#.And(landcover_100m.neq(80))
+landcover_100m_binary = landcover_100m.neq(200)  # .And(landcover_100m.neq(80))
 
 # Polygonize the landcover 100m binary
 landcover_100m_binary_vector = landcover_100m_binary.reduceToVectors(
     geometry=aoi_ee,
-    geometryType='polygon',
+    geometryType="polygon",
     scale=100,
     maxPixels=1e13,
     reducer=ee.Reducer.countEvery(),
-
 )
 
 
@@ -86,17 +90,22 @@ landcover_100m_binary_vector = landcover_100m_binary.reduceToVectors(
 map = geemap.Map()
 map.centerObject(aoi_ee, 7)
 # map.addLayer(dem_30m, {'min': 0, 'max': 3000}, 'DEM 30m')
-map.addLayer(hillshade, {}, 'Hillshade')
+map.addLayer(hillshade, {}, "Hillshade")
 
 # Add landcover data with opacity 50%
-map.addLayer(landcover_100m, {}, 'Landcover')
-map.addLayer(landcover_100m_binary, {}, 'Landcover (binary)')
+map.addLayer(landcover_100m, {}, "Landcover")
+map.addLayer(landcover_100m_binary, {}, "Landcover (binary)")
 
-map.addLayer(landcover_100m_binary_vector, {}, 'Landcover (vector)')
+map.addLayer(landcover_100m_binary_vector, {}, "Landcover (vector)")
 
 # Display AOI as an empty box
-map.addLayer(aoi_ee.style(**{'color': 'red', 'width': 2, 'fillColor': '00000000'}), {}, 'AOI')
+map.addLayer(
+    aoi_ee.style(**{"color": "red", "width": 2, "fillColor": "00000000"}),
+    {},
+    "AOI",
+)
 map
+
 
 # %%
 # Define a function to export a vector to Google Drive
@@ -111,7 +120,7 @@ def export_vector(vector, filename, wait=True):
         description=filename,
         folder=gdrive_dirname,
         fileNamePrefix=filename,
-        fileFormat='GeoJSON',
+        fileFormat="GeoJSON",
     )
 
     task.start()
@@ -121,24 +130,30 @@ def export_vector(vector, filename, wait=True):
 
     return task
 
+
 # Define a function to wait for tasks to complete
 def wait_for_tasks(task_ids: list[str]):
     # Wait for the task to complete
     print(f"Exporting {len(task_ids)} item(s) to Google Drive")
     all_status = ee.data.getTaskStatus(task_ids)
-    running_states = ['READY', 'RUNNING']
-    while any(task['state'] in running_states for task in all_status):
+    running_states = ["READY", "RUNNING"]
+    while any(task["state"] in running_states for task in all_status):
         print("Checking task status")
         all_status = ee.data.getTaskStatus(task_ids)
-        remaining_tasks = [s for s in all_status if s['state'] in running_states]
+        remaining_tasks = [
+            s for s in all_status if s["state"] in running_states
+        ]
         print(f"Remaining tasks: {len(remaining_tasks)}")
         time.sleep(20)
-    
+
     print("All tasks completed")
+
 
 # %%
 # Export the landcover 100m binary vector
-task = export_vector(landcover_100m_binary_vector, "landcover_100m_binary_vector")
+task = export_vector(
+    landcover_100m_binary_vector, "landcover_100m_binary_vector"
+)
 
 
 # %%

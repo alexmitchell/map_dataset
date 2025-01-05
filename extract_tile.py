@@ -2,28 +2,54 @@
 
 
 # %%
-import numpy as np
-import geopandas as gpd
+# Check for ipython environment before any other imports
+# Some modules like loguru import ipykernel for some reason
+import sys  # noqa: I001
+
+has_ipython = "ipykernel" in sys.modules  # noqa: I001
+
+import argparse
 from pathlib import Path
+
+import geopandas as gpd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import shapely as shp
+import numpy as np
 import rasterio as rio
+import shapely as shp
 from rasterio import features as rio_features
 
 import landcover_training_dataset as td
 
 # from importlib import reload
 
+running_in_cli = __name__ == "__main__" and not has_ipython
+
 ################################################################################
 # %%
 # Config
+
+# Pick a random seed (would be idx in __getitem__)
+if running_in_cli:
+    # Running from the command line
+    # Parse args for random seed
+    parser = argparse.ArgumentParser()
+    parser.add_argument("rand_seed", type=int)
+    args = parser.parse_args()
+    rand_seed = args.rand_seed
+    print(f"Using random seed from command line: {rand_seed}")
+else:
+    # Running in a jupyter notebook environment (e.g. interactive mode)
+    # Use hardcoded random seed
+    rand_seed = 4
+    print(f"Using hardcoded random seed: {rand_seed}")
 
 # Note: All files exported from earth engine seem to be in EPSG:4326?
 
 # Data directories
 root_data_dir = Path("data")
 data_dir = root_data_dir / "greece"
+plots_dir = data_dir / "plots"
 
 # Area of interest in EPSG:4326
 aoi_filepath = data_dir / "aoi.geojson"
@@ -41,13 +67,10 @@ landcover_polygons_filepath = data_dir / "landcover_100m_binary_vector.geojson"
 
 # Tile width range in meters
 # TODO: Approximate tile width range from the aoi dimensions?
-tile_width_range = (10**2, 10**5) # meters
+tile_width_range = (10**2, 10**5)  # meters
 
 # Final raster size in pixels
 tile_raster_size = 64
-
-# Pick a random seed (would be idx in __getitem__)
-rand_seed = 0
 
 ########################################
 
@@ -61,9 +84,13 @@ for path in to_check:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
+# Create output directory if it doesn't exist
+plots_dir.mkdir(exist_ok=True)
+
 ################################################################################
 # %%
 # Initialization (preprocessing)
+print("Initializing")
 
 aoi_raw_gdf = gpd.read_file(aoi_filepath)
 aoi_shp = aoi_raw_gdf.to_crs(projected_crs).union_all()
@@ -86,6 +113,7 @@ landcover_data_gdf = (
     .to_crs(projected_crs)
 )
 
+
 # %%
 # Plot the data
 def plot_basic_map(ax: mpl.axes.Axes = None) -> mpl.axes.Axes:
@@ -105,11 +133,12 @@ def plot_basic_map(ax: mpl.axes.Axes = None) -> mpl.axes.Axes:
 
     return ax
 
+
 def plot_polygons(
-        geometries: shp.geometry.base.BaseGeometry|None,
-        ax: mpl.axes.Axes,
+    geometries: shp.geometry.base.BaseGeometry | None,
+    ax: mpl.axes.Axes,
 ):
-    """ Plot a shapely MultiPolygon or Polygon """
+    """Plot a shapely MultiPolygon or Polygon"""
     if geometries is None:
         return
 
@@ -124,11 +153,17 @@ def plot_polygons(
         xs, ys = geom.exterior.xy
         ax.plot(xs, ys)
 
-plot_basic_map()
-plt.show()
+
+if not running_in_cli:
+    print("Plotting basic map view")
+    plot_basic_map()
+    plt.show()
+
 # %%
 ################################################################################
 # Generate a random tile
+
+print("Generating a random tile")
 
 # Set up a random number generator using the index as a seed
 idx = rand_seed
@@ -136,6 +171,7 @@ rng = np.random.default_rng(idx)
 
 # Pick a random tile width
 tile_width = rng.integers(*tile_width_range)
+print(f"Random tile width: {tile_width} m")
 
 # %%
 # Figure out a target zone that will fit a tile with any rotation
@@ -170,10 +206,12 @@ while target_point is None:
             f"{max_attempts} attempts. It is highly probable something "
             "is wrong with the aoi/target zone."
         )
+print(f"Random target point: {target_point}")
 
 # %%
 # Pick a random rotation angle
 rotation_angle = rng.uniform(0, 360)
+print(f"Random rotation angle: {rotation_angle:.2f} degrees")
 
 # Make a square around the target point and rotate it
 square = shp.geometry.box(*target_point.buffer(tile_width / 2).bounds)
@@ -186,6 +224,7 @@ rotated_square = shp.affinity.rotate(
 
 # %%
 # Clip the landcover polygons to the rotated square
+print("Extracting landcover data in target square")
 landcover_gdf = landcover_data_gdf
 rotated_square_landcover = landcover_gdf.intersection(rotated_square)
 
@@ -198,6 +237,7 @@ tile_polygons = rotated_square_landcover.rotate(
 
 # %%
 # Rasterize the tile polygons and transform to the raster size
+print("Rasterizing tile")
 tile_size = tile_raster_size
 rio_transform = rio.transform.from_bounds(
     *square_bounds,
@@ -218,12 +258,16 @@ tile_raster = rio_features.rasterize(
 # In this case the percent of the tile that is land
 land_percent = tile_raster.sum() / tile_raster.size * 100
 
+print(f"Land percent: {land_percent:.2f}")
+print("Finished generating tile in script")
+
 # %%
 ################################################################################
 # Using pytorch dataset
 
 # Initialize the dataset object
 # reload(td)
+print("Initializing pytorch dataset")
 dataset = td.BinaryLandcoverDataset(
     aoi_filepath=aoi_filepath,
     projected_crs=projected_crs,
@@ -234,6 +278,7 @@ dataset = td.BinaryLandcoverDataset(
 )
 
 # Get the random tile
+print("Getting random tile from pytorch dataset")
 pytorch_tile, pytorch_land_percent = dataset[rand_seed]
 
 
@@ -243,6 +288,7 @@ pytorch_tile, pytorch_land_percent = dataset[rand_seed]
 
 # %%
 # Plot entire map area
+print("Plotting entire map area")
 ax = plot_basic_map()
 # fig, ax = plt.subplots(figsize=(10, 10))
 plot_polygons(target_zone_shp, ax)
@@ -257,20 +303,25 @@ ax.set_title(
     f"rotation angle: {rotation_angle}"
 )
 
-plt.show()
+plt.tight_layout()
+
+plt.savefig(plots_dir / f"full-map_rand-{rand_seed}.png")
+plt.close()
+
+if not running_in_cli:
+    plt.show()
 
 # %%
 # Plot only the final tile and associated polygons
-
+print("Plotting final tile and polygons")
 fig, ax = plt.subplots(figsize=(5, 5))
 ax.imshow(np.flipud(tile_raster), cmap="gray", origin="lower")
 
 # Scale and translate the polygons to line up with raster
 tile_polygons_normalized = (
-    tile_polygons
-    .translate(-square_bounds[0], -square_bounds[1])
+    tile_polygons.translate(-square_bounds[0], -square_bounds[1])
     .scale(tile_size / tile_width, tile_size / tile_width, origin=(0, 0))
-    .translate(-0.5, -0.5) # so polys line up with imshow pixels
+    .translate(-0.5, -0.5)  # so polys line up with imshow pixels
 )
 tile_polygons_normalized.plot(
     ax=ax,
@@ -286,20 +337,34 @@ ax.set_title(
     f"land percent: {land_percent:.2f}"
 )
 
-plt.show()
+plt.tight_layout()
+
+plt.savefig(plots_dir / f"tile_rand-{rand_seed}.png")
+plt.close()
+
+if not running_in_cli:
+    plt.show()
 
 # %%
 # Plot the pytorch tile for comparison
-fig, ax = plt.subplots(figsize=(5, 5))
-ax.imshow(np.flipud(pytorch_tile), cmap="gray", origin="lower")
+if not running_in_cli:
+    print("Plotting pytorch tile")
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.imshow(np.flipud(pytorch_tile), cmap="gray", origin="lower")
 
-ax.set_title(
-    "Pytorch tile\n"
-    f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
-    f"final resolution: {tile_raster_size} px, "
-    f"land percent: {land_percent:.2f}"
-)
+    ax.set_title(
+        "Pytorch tile\n"
+        f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
+        f"final resolution: {tile_raster_size} px, "
+        f"land percent: {land_percent:.2f}"
+    )
 
-plt.show()
+    plt.show()
+
+# %%
+# Check that the two tiles are equal
+print("Checking that the two tiles are equal")
+np.testing.assert_array_equal(tile_raster, pytorch_tile)
+print("Tiles are equal!")
 
 # %%

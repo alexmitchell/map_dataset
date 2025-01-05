@@ -1,12 +1,14 @@
 
-import numpy as np
+from pathlib import Path
+
 import geopandas as gpd
+import numpy as np
 import rasterio as rio
-from rasterio import features as rio_features
 import shapely as shp
 import torch
+from rasterio import features as rio_features
 from torch.utils.data import Dataset
-from pathlib import Path
+
 
 class BinaryLandcoverDataset(Dataset):
     def __init__(

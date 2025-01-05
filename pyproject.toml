@@ -15,6 +15,10 @@ dependencies = [
     "setuptools>=75.6.0",
 ]
 
+[tool.ruff]
+line-length = 80
+select = ["I"]
+
 [project.optional-dependencies]
 cpu = [
   "torch>=2.5.1",
