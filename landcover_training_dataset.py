@@ -126,20 +126,31 @@ class BinaryLandcoverDataset(Dataset):
 
         # Rasterize the tile polygons and transform to the raster size
         tile_size_px = self.tile_raster_size_px
-        rio_transform = rio.transform.from_bounds(
-            *square_bounds,
-            tile_size_px,
-            tile_size_px,
-        )
-        tile_raster = rio_features.rasterize(
-            [(geom, value) for value, geom in tile_polygons.items()],
-            out_shape=(tile_size_px, tile_size_px),
-            transform=rio_transform,
-            all_touched=False,
-            fill=0,
-            default_value=1,
-            dtype="uint8",
-        )
+        geom_mapping = [
+            (geom, value)
+            for value, geom in tile_polygons.items()
+            if not geom.is_empty
+        ]
+
+        if not geom_mapping:
+            tile_raster = np.zeros(
+                    (tile_size_px, tile_size_px),
+                    dtype='uint8',
+            )
+        else:
+            tile_raster = rio_features.rasterize(
+                geom_mapping,
+                out_shape=(tile_size_px, tile_size_px),
+                transform=rio.transform.from_bounds(
+                    *square_bounds,
+                    tile_size_px,
+                    tile_size_px,
+                ),
+                all_touched=False,
+                fill=0,
+                default_value=1,
+                dtype="uint8",
+            )
 
         # Even though we only have one channel, the model still expects a 
         # channel dimension.
