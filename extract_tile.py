@@ -35,7 +35,7 @@ if running_in_cli:
     # Parse args for random seed
     parser = argparse.ArgumentParser()
     parser.add_argument("rand_seed", type=int)
-    parser.add_argument("--batch", type=int, default=False)
+    parser.add_argument("--batch", action="store_true")
     args = parser.parse_args()
     rand_seed = args.rand_seed
     print(f"Using random seed from command line: {rand_seed}")
@@ -133,6 +133,7 @@ pytorch_dataset = td.BinaryLandcoverDataset(
     tile_width_range=tile_width_range,
     tile_raster_size=tile_raster_size,
 )
+
 
 # %%
 # Plot the data
@@ -273,9 +274,7 @@ rio_transform = rio.transform.from_bounds(
 )
 
 geom_mapping = [
-    (geom, value)
-    for value, geom in tile_polygons.items()
-    if not geom.is_empty
+    (geom, value) for value, geom in tile_polygons.items() if not geom.is_empty
 ]
 if not geom_mapping:
     raise ValueError("No landcover data in tile")
@@ -374,7 +373,9 @@ else:
 if not running_in_cli:
     print("Plotting pytorch tile")
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(np.flipud(pytorch_tile), cmap="gray", origin="lower", vmin=0, vmax=1)
+    ax.imshow(
+        np.flipud(pytorch_tile), cmap="gray", origin="lower", vmin=0, vmax=1
+    )
 
     ax.set_title(
         "Pytorch tile\n"
@@ -397,7 +398,7 @@ print("Tiles are equal!")
 rand_sequence = []
 if batch_flag:
     # 0 to rand_seed
-    rand_sequence = range(rand_seed)
+    rand_sequence = range(rand_seed + 1)
 else:
     # Just rand_seed
     rand_sequence = [rand_seed]
