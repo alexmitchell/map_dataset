@@ -156,6 +156,8 @@ def get_num_workers(num_workers: Optional[int]) -> int:
     except KeyError:
         return os.cpu_count()
 
+torch.set_float32_matmul_precision('high')
+
 model = DiffusionTask(unet)
 data = MapData(
         resolution_px=32,
@@ -165,6 +167,6 @@ data = MapData(
 )
 trainer = L.Trainer(
         max_epochs=100,
-        fast_dev_run=True,
+        #fast_dev_run=True,
 )
 trainer.fit(model, data)
