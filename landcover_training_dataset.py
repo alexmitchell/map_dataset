@@ -174,8 +174,15 @@ class BinaryLandcoverDataset(Dataset):
             tile_size,
             tile_size,
         )
+        geom_mapping = [
+            (geom, value)
+            for value, geom in tile_polygons.items()
+            if not geom.is_empty
+        ]
+        if not geom_mapping:
+            raise ValueError("No landcover data in tile")
         tile_raster = rio_features.rasterize(
-            [(geom, value) for value, geom in tile_polygons.items()],
+            geom_mapping,
             out_shape=(tile_size, tile_size),
             transform=rio_transform,
             all_touched=False,
