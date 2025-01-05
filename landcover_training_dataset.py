@@ -138,6 +138,10 @@ class BinaryLandcoverDataset(Dataset):
         max_tile_distance = np.sqrt(2) * tile_width / 2
         target_zone_shp = self.aoi_shp.buffer(-max_tile_distance)
 
+        # Check that there is a target zone to sample from
+        if target_zone_shp.is_empty:
+            raise ValueError("Target zone is empty. Tile width too large.")
+
         # Pick a random point in the target zone
         target_point = self.get_random_point_in_polygon(target_zone_shp, rng)
 

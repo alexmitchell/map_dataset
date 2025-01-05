@@ -67,7 +67,7 @@ landcover_polygons_filepath = data_dir / "landcover_100m_binary_vector.geojson"
 
 # Tile width range in meters
 # TODO: Approximate tile width range from the aoi dimensions?
-tile_width_range = (10**2, 10**5)  # meters
+tile_width_range = (10**4, 10**5)  # meters
 
 # Final raster size in pixels
 tile_raster_size = 64
@@ -179,6 +179,10 @@ print(f"Random tile width: {tile_width} m")
 # away from the edges of the aoi
 max_tile_distance = np.sqrt(2) * tile_width / 2
 target_zone_shp = aoi_shp.buffer(-max_tile_distance)
+
+# Check that there is a target zone to sample from
+if target_zone_shp.is_empty:
+    raise ValueError("Target zone is empty. Tile width too large.")
 
 # %%
 # Pick a random point in the target zone
