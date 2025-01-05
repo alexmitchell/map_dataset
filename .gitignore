@@ -18,5 +18,6 @@ wheels/
 
 # Machine learning artifacts
 lightning_logs
+samples
 *.ckpt
 *.pt

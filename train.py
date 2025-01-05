@@ -1,8 +1,10 @@
 import lightning as L
 import torch
+import numpy as np
 import os
 
 from diffusers import DDPMScheduler
+from diffusers.utils import make_image_grid, numpy_to_pil
 from torch.nn import MSELoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -61,6 +63,22 @@ class DiffusionTask(L.LightningModule):
         self.log('test/loss', loss)
         return loss
 
+    def on_validation_epoch_end(self):
+        rng = np.random.default_rng(0)
+        images = generate(
+                rng=rng,
+                model=self.model,
+                scheduler=self.scheduler,
+                n=16,
+                label=0.5,
+        )
+        images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
+        image_grid = make_image_grid(images, rows=4, cols=4)
+
+        sample_dir = Path('samples')
+        os.makedirs(sample_dir, exist_ok=True)
+        image_grid.save(sample_dir / f'epoch_{self.current_epoch}.png')
+
 class MapData(L.LightningDataModule):
 
     def __init__(
@@ -110,6 +128,26 @@ class MapData(L.LightningDataModule):
     def val_dataloader(self):
         return self._dataloaders['val']
 
+@torch.no_grad()
+def generate(rng, model, scheduler, n, label):
+    device = next(model.parameters()).device
+
+    # Assume that the model is in eval-mode.  During training, lightning puts 
+    # the model in eval-mode for validation.
+
+    w = h = model.config.sample_size
+
+    x = rng.normal(size=(n, 1, w, h))
+    x = torch.from_numpy(x).to(device=device, dtype=torch.float32)
+
+    label = torch.full((n,), label).to(device=device, dtype=torch.float32)
+
+    for t in scheduler.timesteps:
+        y = model(x, t, label).sample
+        x = scheduler.step(y, t, x).prev_sample
+
+    return x
+
 def get_num_workers(num_workers: Optional[int]) -> int:
     if num_workers is not None:
         return num_workers
@@ -127,6 +165,6 @@ data = MapData(
 )
 trainer = L.Trainer(
         max_epochs=100,
-        #fast_dev_run=True,
+        fast_dev_run=True,
 )
 trainer.fit(model, data)
