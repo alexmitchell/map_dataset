@@ -9,7 +9,11 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import shapely as shp
 import rasterio as rio
-from rasterio import features
+from rasterio import features as rio_features
+
+import training_dataset as td
+
+# from importlib import reload
 
 ################################################################################
 # %%
@@ -17,43 +21,69 @@ from rasterio import features
 
 # Note: All files exported from earth engine seem to be in EPSG:4326?
 
-data_dir = Path("data")
-aoi_filepath = Path("aoi/greece_aoi.geojson")
+# Data directories
+root_data_dir = Path("data")
+data_dir = root_data_dir / "greece"
 
-# define projected CRS for greece
-proj_crs = "EPSG:2100"
+# Area of interest in EPSG:4326
+aoi_filepath = data_dir / "aoi.geojson"
 
-# Layers
-landcover_100m_binary_filepath = data_dir / "landcover_100m_binary_vector.geojson"
+# Projected CRS appropriate for the area of interest
+projected_crs = "EPSG:2100"
 
-# Output
-target_zone_filepath = data_dir / "greece_aoi_target_zone.geojson"
+# Layers in EPSG:4326
+landcover_polygons_filepath = data_dir / "landcover_100m_binary_vector.geojson"
 
-# Set up a random number generator
-rand_seed = 0
-rng = np.random.default_rng(rand_seed)
+# # Landcover lookup table
+# # Contains information on how to interpret the landcover data
+# # landcover_lookup_filepath = data_dir / "landcover_lookup_CGLS-LC100_V3.csv"
+# landcover_lookup_filepath = root_data_dir / "landcover_lookup_binary.csv"
 
-# Tile width range
+# Tile width range in meters
+# TODO: Approximate tile width range from the aoi dimensions?
 tile_width_range = (10**2, 10**5) # meters
-tile_width = rng.integers(*tile_width_range)
 
+# Final raster size in pixels
 tile_raster_size = 64
+
+# Pick a random seed (would be idx in __getitem__)
+rand_seed = 0
+
+########################################
+
+# Check input filepaths
+to_check = [
+    aoi_filepath,
+    # landcover_lookup_filepath,
+    landcover_polygons_filepath,
+]
+for path in to_check:
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
 
 ################################################################################
 # %%
-# Load and clean data
+# Initialization (preprocessing)
 
-# Load the aoi
-aoi_raw = gpd.read_file(aoi_filepath)
-aoi = aoi_raw.to_crs(proj_crs)
+aoi_raw_gdf = gpd.read_file(aoi_filepath)
+aoi_shp = aoi_raw_gdf.to_crs(projected_crs).union_all()
 
-# Load landcover data
-landcover_100m_binary = (
-    gpd.read_file(landcover_100m_binary_filepath)
-    .replace({"label": {1: "land", 0: "water"}})
+# # Load landcover lookup table
+# landcover_lookup_df = pd.read_csv(landcover_lookup_filepath)
+# name_lookup_dict = (
+#     landcover_lookup_df
+#     .set_index("value")
+#     .drop(columns=["description"])
+# ).to_dict()["name"]
+
+
+# Load landcover data and do some basic cleaning
+landcover_data_gdf = (
+    gpd.read_file(landcover_polygons_filepath)
+    # .replace({"label": name_lookup_dict})
     .drop(columns=["id", "count"])
     .dissolve(by="label")
-    .to_crs(proj_crs)
+    .to_crs(projected_crs)
 )
 
 # %%
@@ -62,209 +92,214 @@ def plot_basic_map(ax: mpl.axes.Axes = None) -> mpl.axes.Axes:
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 10))
 
-    landcover_100m_binary.plot(
+    landcover_data_gdf.plot(
         ax=ax,
         legend=True,
         figsize=(10, 10),
         legend_kwds={"loc": "upper left"},
-        color=["lightgreen", "lightblue"],
+        color=["lightblue", "lightgreen"],
         edgecolor="black",
         linewidth=0.1,
     )
-    aoi.plot(ax=ax, edgecolor="red", linewidth=5, facecolor="none")
+    ax.plot(*aoi_shp.exterior.xy, "r", linewidth=5)
 
     return ax
 
+def plot_polygons(
+        geometries: shp.geometry.base.BaseGeometry|None,
+        ax: mpl.axes.Axes,
+):
+    """ Plot a shapely MultiPolygon or Polygon """
+    if geometries is None:
+        return
+
+    if isinstance(geometries, shp.geometry.MultiPolygon):
+        geoms_iter = geometries.geoms
+    elif isinstance(geometries, shp.geometry.Polygon):
+        geoms_iter = [geometries]
+    else:
+        raise ValueError(f"Unknown geometry type {type(geometries)}")
+
+    for geom in geoms_iter:
+        xs, ys = geom.exterior.xy
+        ax.plot(xs, ys)
+
 plot_basic_map()
+plt.show()
 # %%
 ################################################################################
-# shapely method
+# Generate a random tile
+
+# Set up a random number generator using the index as a seed
+idx = rand_seed
+rng = np.random.default_rng(idx)
+
+# Pick a random tile width
+tile_width = rng.integers(*tile_width_range)
 
 # %%
-# Extract the shapely geometries
-aoi_geom = aoi.geometry.iloc[0]
-land_geom = landcover_100m_binary.loc["land", "geometry"]
-water_geom = landcover_100m_binary.loc["water", "geometry"]
-
-# Buffer
-max_distance = np.sqrt(2) * tile_width / 2
-target_zone = aoi_geom.buffer(-max_distance)
+# Figure out a target zone that will fit a tile with any rotation
+# This is a polygon inside the aoi that is at least max_tile_distance
+# away from the edges of the aoi
+max_tile_distance = np.sqrt(2) * tile_width / 2
+target_zone_shp = aoi_shp.buffer(-max_tile_distance)
 
 # %%
 # Pick a random point in the target zone
-# Surprising as it is, guess-and-check appears to be the standard way to do this
-rand_point = None
-while rand_point is None:
+# Pick a random point inside the target zone
+# This will be the center of the tile
+# Surprisingly, guess-and-check appears to be the best way to do it
+x_range = target_zone_shp.bounds[::2]
+y_range = target_zone_shp.bounds[1::2]
+target_point = None
+max_attempts = 100
+n_attempts = 0
+while target_point is None:
     candidate_point = shp.geometry.Point(
-        rng.uniform(*target_zone.bounds[::2]),
-        rng.uniform(*target_zone.bounds[1::2]),
+        rng.uniform(*x_range),
+        rng.uniform(*y_range),
     )
-    print(f"Trying point {candidate_point}")
-    if target_zone.contains(candidate_point):
-        rand_point = candidate_point
+    if target_zone_shp.contains(candidate_point):
+        target_point = candidate_point
+
+    # Track number of attempts as a failsafe
+    n_attempts += 1
+    if n_attempts == max_attempts:
+        raise RuntimeError(
+            "Failed to find a random point in the target zone after "
+            f"{max_attempts} attempts. It is highly probable something "
+            "is wrong with the aoi/target zone."
+        )
 
 # %%
-# Pick a rotation angle
+# Pick a random rotation angle
 rotation_angle = rng.uniform(0, 360)
 
-# Make a square around rand_point and rotate it
-square = shp.geometry.box(*rand_point.buffer(tile_width / 2).bounds)
-square_center_pt = shp.geometry.Point(square.centroid)
+# Make a square around the target point and rotate it
+square = shp.geometry.box(*target_point.buffer(tile_width / 2).bounds)
 square_bounds = square.bounds
-square = shp.affinity.rotate(square, rotation_angle, origin=square_center_pt)
+rotated_square = shp.affinity.rotate(
+    square,
+    rotation_angle,
+    origin=target_point,
+)
 
 # %%
-# Clip the landcover data to the square
-square_land = land_geom.intersection(square)
-square_water = water_geom.intersection(square)
+# Clip the landcover polygons to the rotated square
+landcover_gdf = landcover_data_gdf
+rotated_square_landcover = landcover_gdf.intersection(rotated_square)
 
 # %%
-# Plot
-ax = plot_basic_map()
-# fig, ax = plt.subplots(figsize=(10, 10))
-for geoms in [aoi_geom, land_geom, water_geom]:
-    for geom in geoms.geoms:
-        # facecolor = {
-        #     aoi_geom: "none",
-        #     land_geom: "lightgreen",
-        #     water_geom: "lightblue",
-        # }
-        xs, ys = geom.exterior.xy
-        # ax.fill(xs, ys, alpha=0.5, ec="none", fc=facecolor[geoms])
-        ax.plot(xs, ys)
-
-ax.plot(*target_zone.exterior.xy)
-ax.plot(*rand_point.xy, "ro", markersize=10)
-
-for geoms in [square_land, square_water]:
-    for geom in geoms.geoms:
-        xs, ys = geom.exterior.xy
-        ax.plot(xs, ys)
-
-ax.plot(*square.exterior.xy)
-
-ax.set_title(f"rng seed: {rand_seed}, tile width: {tile_width} m, rotation angle: {rotation_angle}")
-    
-# %%
-# Unrotate the square data
-land_unrotated = shp.affinity.rotate(square_land, -rotation_angle, origin=square_center_pt)
-water_unrotated = shp.affinity.rotate(square_water, -rotation_angle, origin=square_center_pt)
+# Unrotate the square data to get the tile data
+tile_polygons = rotated_square_landcover.rotate(
+    -rotation_angle,
+    origin=target_point,
+)
 
 # %%
-# Rasterize
-t_size = tile_raster_size
-lookup = {
-    1: water_unrotated,
-    2: land_unrotated,
-}
-tile_data_raster = features.rasterize(
-    [(g, l) for l, g in lookup.items()],
-    out_shape=(t_size, t_size),
-    transform=rio.transform.from_bounds(*square_bounds, t_size, t_size),
+# Rasterize the tile polygons and transform to the raster size
+tile_size = tile_raster_size
+rio_transform = rio.transform.from_bounds(
+    *square_bounds,
+    tile_size,
+    tile_size,
+)
+tile_raster = rio_features.rasterize(
+    [(geom, value) for value, geom in tile_polygons.items()],
+    out_shape=(tile_size, tile_size),
+    transform=rio_transform,
     all_touched=False,
     fill=0,
     default_value=1,
     dtype="uint8",
 )
 
-# plt.imshow(tile_data_raster, cmap="gray")
-
-# %%
-# Plot unrotated
-fig, ax = plt.subplots(figsize=(10, 10))
-ax.imshow(np.flipud(tile_data_raster), cmap="gray", origin="lower")
-for geoms in [land_unrotated, water_unrotated]:
-    for geom in geoms.geoms:
-        # Translate to (0, 0)
-        geom = shp.affinity.translate(geom, xoff=-square_bounds[0], yoff=-square_bounds[1])
-
-        # Scale the coordinates to the raster size
-        geom = shp.affinity.scale(geom, xfact=t_size / tile_width, yfact=t_size / tile_width, origin=(0, 0))
-
-        # Translate again half a pixel to line up with the raster
-        geom = shp.affinity.translate(geom, xoff=-0.5, yoff=-0.5)
-
-        xs, ys = geom.exterior.xy
-        # print(type(ys))
-        # ys = t_size - ys
-        ax.plot(xs, ys)
-        # ax.fill(xs, ys, alpha=0.5, ec='none', fc=facecolor)
-
-ax.set_title(f"rng seed: {rand_seed}, tile width: {tile_width} m, final resolution: {t_size} px")
-
-
-# %%
+# Calculate a metric for the tile
+# In this case the percent of the tile that is land
+land_percent = tile_raster.sum() / tile_raster.size * 100
 
 # %%
 ################################################################################
-# Geopandas method
+# Using pytorch dataset
+
+# Initialize the dataset object
+# reload(td)
+dataset = td.BinaryLandcoverDataset(
+    aoi_filepath=aoi_filepath,
+    projected_crs=projected_crs,
+    landcover_polygons_filepath=landcover_polygons_filepath,
+    # landcover_lookup_filepath=landcover_lookup_filepath,
+    tile_width_range=tile_width_range,
+    tile_raster_size=tile_raster_size,
+)
+
+# Get the random tile
+pytorch_tile, pytorch_land_percent = dataset[rand_seed]
+
 
 # %%
+################################################################################
+# Plot stuff
 
-# # Buffer
-# # tile_width = 10**5
-# target_zone = aoi.buffer(-tile_width // 2)
+# %%
+# Plot entire map area
+ax = plot_basic_map()
+# fig, ax = plt.subplots(figsize=(10, 10))
+plot_polygons(target_zone_shp, ax)
+plot_polygons(rotated_square, ax)
+landcover_data_gdf.plot(ax=ax, facecolor="none", linewidth=0.5)
+rotated_square_landcover.plot(ax=ax, facecolor="none", linewidth=0.5)
 
-# # # Save the target zone
-# # target_zone.to_file(target_zone_filepath)
+ax.plot(*target_point.xy, "ro", markersize=10)
 
-# # ax = plot_basic_map()
-# # target_zone.plot(ax=ax, edgecolor="orange", linewidth=5, facecolor="none")
+ax.set_title(
+    f"rng seed: {rand_seed}, tile width: {tile_width} m, "
+    f"rotation angle: {rotation_angle}"
+)
 
-# # %%
-# # Pick a random point in the inner aoi
-# rand_points = target_zone.sample_points(1, random_state=rng)
-# rand_point = rand_points.iloc[0]
+plt.show()
 
-# # %%
-# # Pick a rotation angle
-# rotation_angle = rng.uniform(0, 360)
+# %%
+# Plot only the final tile and associated polygons
 
-# # %%
-# # Make a square around rand_point and rotate it
-# square = shp.geometry.box(*rand_point.buffer(tile_width / 2).bounds)
-# square = shp.affinity.rotate(square, rotation_angle, origin="center")
+fig, ax = plt.subplots(figsize=(5, 5))
+ax.imshow(np.flipud(tile_raster), cmap="gray", origin="lower")
 
-# # %%
-# # clip the landcover data to the square
-# square_data_vector = gpd.clip(landcover_100m_binary, square)
+# Scale and translate the polygons to line up with raster
+tile_polygons_normalized = (
+    tile_polygons
+    .translate(-square_bounds[0], -square_bounds[1])
+    .scale(tile_size / tile_width, tile_size / tile_width, origin=(0, 0))
+    .translate(-0.5, -0.5) # so polys line up with imshow pixels
+)
+tile_polygons_normalized.plot(
+    ax=ax,
+    facecolor="none",
+    edgecolor="red",
+    linewidth=0.5,
+)
 
-# # %%
-# # Plot
-# ax = plot_basic_map()
-# target_zone.plot(ax=ax, edgecolor="orange", linewidth=5, facecolor="none")
-# gpd.GeoSeries([square]).plot(ax=ax, edgecolor="purple", linewidth=5, facecolor="none")
-# gpd.GeoSeries([rand_point]).plot(ax=ax, edgecolor="red", linewidth=5, facecolor="none")
+ax.set_title(
+    "Script tile\n"
+    f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
+    f"final resolution: {tile_raster_size} px, "
+    f"land percent: {land_percent:.2f}"
+)
 
-# square_data_vector.plot(ax=ax, legend=True, color=["lightgreen", "lightblue"], edgecolor="black", linewidth=0.5)
+plt.show()
 
-# # %%
-# # Unrotate the geodataframe
-# tile_vectors = gpd.GeoDataFrame(
-#     {
-#         "geometry": square_data_vector.geometry.rotate(-rotation_angle, origin="center"),
-#         "label": square_data_vector.index,
-#     }
-# )
+# %%
+# Plot the pytorch tile for comparison
+fig, ax = plt.subplots(figsize=(5, 5))
+ax.imshow(np.flipud(pytorch_tile), cmap="gray", origin="lower")
 
-# # Convert the square to a raster
-# t_size = tile_raster_size
-# lookup = {
-#     "land": 2,
-#     "water": 1,
-# }
-# vector_list = [(g, lookup[l]) for g, l in zip(tile_vectors.geometry, tile_vectors.index)]
-# tile_data_raster = features.rasterize(
-#     vector_list,
-#     out_shape=(t_size, t_size),
-#     transform=rio.transform.from_bounds(*square.bounds, t_size, t_size),
-#     all_touched=True,
-#     fill=0,
-#     default_value=1,
-#     dtype="uint8",
-# )
+ax.set_title(
+    "Pytorch tile\n"
+    f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
+    f"final resolution: {tile_raster_size} px, "
+    f"land percent: {land_percent:.2f}"
+)
 
-# # Plot the raster
-# plt.imshow(tile_data_raster, cmap="gray")
+plt.show()
 
-# # %%
+# %%
