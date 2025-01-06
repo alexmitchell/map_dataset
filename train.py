@@ -70,7 +70,7 @@ class DiffusionTask(L.LightningModule):
                 model=self.model,
                 scheduler=self.scheduler,
                 n=16,
-                label=0.5,
+                label=500,
         )
         images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
         image_grid = make_image_grid(images, rows=4, cols=4)
@@ -165,8 +165,10 @@ data = MapData(
         val_epoch_size=2**14,
         batch_size=64,
 )
-trainer = L.Trainer(
-        max_epochs=100,
-        #fast_dev_run=True,
-)
-trainer.fit(model, data)
+
+if __name__ == '__main__':
+    trainer = L.Trainer(
+            max_epochs=100,
+            #fast_dev_run=True,
+    )
+    trainer.fit(model, data)
