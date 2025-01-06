@@ -10,7 +10,9 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from model import unet
 from landcover_training_dataset import BinaryLandcoverDataset
+from torchmetrics.image import TotalVariation
 from pathlib import Path
+from tqdm import tqdm
 
 from typing import Optional
 
@@ -22,6 +24,7 @@ class DiffusionTask(L.LightningModule):
         self.scheduler = DDPMScheduler(num_train_timesteps=1000)
         self.optimizer = Adam(model.parameters())
         self.loss = MSELoss()
+        self.tv = TotalVariation(reduction='mean')
 
     def configure_optimizers(self):
         return self.optimizer
@@ -69,15 +72,22 @@ class DiffusionTask(L.LightningModule):
                 rng=rng,
                 model=self.model,
                 scheduler=self.scheduler,
-                n=16,
+                n=1024,
                 label=500,
         )
-        images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
+
+        self.tv.update(images)
+        self.log('gen/tv', self.tv.compute())
+        self.tv.reset()
+
+        images = numpy_to_pil(images[:16].cpu().permute(0, 2, 3, 1).numpy())
         image_grid = make_image_grid(images, rows=4, cols=4)
 
-        sample_dir = Path('samples')
-        os.makedirs(sample_dir, exist_ok=True)
-        image_grid.save(sample_dir / f'epoch_{self.current_epoch}.png')
+        if self.trainer.logger.log_dir:
+            image_dir = Path(self.trainer.logger.log_dir) / 'gen_images'
+            os.makedirs(image_dir, exist_ok=True)
+            image_grid.save(image_dir / f'epoch_{self.current_epoch:02}.png')
+
 
 class MapData(L.LightningDataModule):
 
@@ -142,7 +152,7 @@ def generate(rng, model, scheduler, n, label):
 
     label = torch.full((n,), label).to(device=device, dtype=torch.float32)
 
-    for t in scheduler.timesteps:
+    for t in tqdm(scheduler.timesteps, desc='Generate images'):
         y = model(x, t, label).sample
         x = scheduler.step(y, t, x).prev_sample
 

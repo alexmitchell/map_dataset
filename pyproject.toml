@@ -12,11 +12,12 @@ dependencies = [
     "geemap>=0.35.1",
     "geopandas>=1.0.1",
     "ipykernel>=6.29.5",
-    "lightning>=2.5.0.post0",
+    "lightning[extra]>=2.5.0.post0",
     "pip>=24.3.1",
     "pycrs>=1.0.2",
     "rasterio>=1.4.3",
     "setuptools>=75.6.0",
+    "torchmetrics>=1.6.1",
 ]
 
 [tool.ruff]
