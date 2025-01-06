@@ -21,3 +21,4 @@ lightning_logs
 samples
 *.ckpt
 *.pt
+cache.feather
