@@ -35,14 +35,24 @@ if running_in_cli:
     # Parse args for random seed
     parser = argparse.ArgumentParser()
     parser.add_argument("rand_seed", type=int)
+    parser.add_argument("--batch", action="store_true")
     args = parser.parse_args()
     rand_seed = args.rand_seed
     print(f"Using random seed from command line: {rand_seed}")
+
+    batch_flag = args.batch
+    if batch_flag:
+        print(f"Processing random seeds 0 to {rand_seed}")
+        # Note, using this requires putting the tile generation cells (including
+        # plotting) all into a function which will negate the interactive
+        # ability
+        raise NotImplementedError("Batch mode not implemented yet")
 else:
     # Running in a jupyter notebook environment (e.g. interactive mode)
     # Use hardcoded random seed
-    rand_seed = 4
+    rand_seed = 0
     print(f"Using hardcoded random seed: {rand_seed}")
+    batch_flag = False
 
 # Note: All files exported from earth engine seem to be in EPSG:4326?
 
@@ -67,7 +77,7 @@ landcover_polygons_filepath = data_dir / "landcover_100m_binary_vector.geojson"
 
 # Tile width range in meters
 # TODO: Approximate tile width range from the aoi dimensions?
-tile_width_range = (10**2, 10**5)  # meters
+tile_width_range = (10**4, 10**5)  # meters
 
 # Final raster size in pixels
 tile_raster_size = 64
@@ -111,6 +121,19 @@ landcover_data_gdf = (
     .drop(columns=["id", "count"])
     .dissolve(by="label")
     .to_crs(projected_crs)
+)
+
+# Initialize the dataset object
+# reload(td)
+print("Initializing pytorch dataset")
+pytorch_dataset = td.BinaryLandcoverDataset(
+    aoi_filepath=aoi_filepath,
+    projected_crs=projected_crs,
+    landcover_polygons_filepath=landcover_polygons_filepath,
+    # landcover_lookup_filepath=landcover_lookup_filepath,
+    tile_width_range_m=tile_width_range,
+    tile_raster_size_px=tile_raster_size,
+    epoch_size=100,
 )
 
 
@@ -163,10 +186,13 @@ if not running_in_cli:
 ################################################################################
 # Generate a random tile
 
-print("Generating a random tile")
+idx = rand_seed
+# def generate_tile(idx: int):
+
+print("#" * 80)
+print(f"Generating a random tile with seed {idx}")
 
 # Set up a random number generator using the index as a seed
-idx = rand_seed
 rng = np.random.default_rng(idx)
 
 # Pick a random tile width
@@ -179,6 +205,10 @@ print(f"Random tile width: {tile_width} m")
 # away from the edges of the aoi
 max_tile_distance = np.sqrt(2) * tile_width / 2
 target_zone_shp = aoi_shp.buffer(-max_tile_distance)
+
+# Check that there is a target zone to sample from
+if target_zone_shp.is_empty:
+    raise ValueError("Target zone is empty. Tile width too large.")
 
 # %%
 # Pick a random point in the target zone
@@ -244,8 +274,14 @@ rio_transform = rio.transform.from_bounds(
     tile_size,
     tile_size,
 )
+
+geom_mapping = [
+    (geom, value) for value, geom in tile_polygons.items() if not geom.is_empty
+]
+if not geom_mapping:
+    raise ValueError("No landcover data in tile")
 tile_raster = rio_features.rasterize(
-    [(geom, value) for value, geom in tile_polygons.items()],
+    geom_mapping,
     out_shape=(tile_size, tile_size),
     transform=rio_transform,
     all_touched=False,
@@ -265,21 +301,14 @@ print("Finished generating tile in script")
 ################################################################################
 # Using pytorch dataset
 
-# Initialize the dataset object
-# reload(td)
-print("Initializing pytorch dataset")
-dataset = td.BinaryLandcoverDataset(
-    aoi_filepath=aoi_filepath,
-    projected_crs=projected_crs,
-    landcover_polygons_filepath=landcover_polygons_filepath,
-    # landcover_lookup_filepath=landcover_lookup_filepath,
-    tile_width_range=tile_width_range,
-    tile_raster_size=tile_raster_size,
-)
-
 # Get the random tile
 print("Getting random tile from pytorch dataset")
-pytorch_tile, pytorch_land_percent = dataset[rand_seed]
+(
+    pytorch_tile,
+    pytorch_noise,
+    pytorch_timestep,
+    pytorch_land_percent,
+) = pytorch_dataset[idx]
 
 
 # %%
@@ -299,23 +328,24 @@ rotated_square_landcover.plot(ax=ax, facecolor="none", linewidth=0.5)
 ax.plot(*target_point.xy, "ro", markersize=10)
 
 ax.set_title(
-    f"rng seed: {rand_seed}, tile width: {tile_width} m, "
+    f"rng seed: {idx}, tile width: {tile_width} m, "
     f"rotation angle: {rotation_angle}"
 )
 
 plt.tight_layout()
 
-plt.savefig(plots_dir / f"full-map_rand-{rand_seed}.png")
-plt.close()
+plt.savefig(plots_dir / f"full-map_rand-{idx}.png")
 
-if not running_in_cli:
+if running_in_cli:
+    plt.close()
+else:
     plt.show()
 
 # %%
 # Plot only the final tile and associated polygons
 print("Plotting final tile and polygons")
 fig, ax = plt.subplots(figsize=(5, 5))
-ax.imshow(np.flipud(tile_raster), cmap="gray", origin="lower")
+ax.imshow(np.flipud(tile_raster), cmap="gray", origin="lower", vmin=0, vmax=1)
 
 # Scale and translate the polygons to line up with raster
 tile_polygons_normalized = (
@@ -332,17 +362,17 @@ tile_polygons_normalized.plot(
 
 ax.set_title(
     "Script tile\n"
-    f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
+    f"rng seed: {idx}, tile width: {tile_width} m,\n"
     f"final resolution: {tile_raster_size} px, "
     f"land percent: {land_percent:.2f}"
 )
 
 plt.tight_layout()
 
-plt.savefig(plots_dir / f"tile_rand-{rand_seed}.png")
-plt.close()
-
-if not running_in_cli:
+plt.savefig(plots_dir / f"tile_rand-{idx}.png")
+if running_in_cli:
+    plt.close()
+else:
     plt.show()
 
 # %%
@@ -350,11 +380,12 @@ if not running_in_cli:
 if not running_in_cli:
     print("Plotting pytorch tile")
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(np.flipud(pytorch_tile), cmap="gray", origin="lower")
+    tile = np.flipud(pytorch_tile.squeeze())
+    ax.imshow(tile, cmap="gray", origin="lower", vmin=0, vmax=1)
 
     ax.set_title(
         "Pytorch tile\n"
-        f"rng seed: {rand_seed}, tile width: {tile_width} m,\n"
+        f"rng seed: {idx}, tile width: {tile_width} m,\n"
         f"final resolution: {tile_raster_size} px, "
         f"land percent: {land_percent:.2f}"
     )
@@ -364,7 +395,21 @@ if not running_in_cli:
 # %%
 # Check that the two tiles are equal
 print("Checking that the two tiles are equal")
-np.testing.assert_array_equal(tile_raster, pytorch_tile)
+np.testing.assert_array_equal(tile_raster, pytorch_tile.squeeze())
 print("Tiles are equal!")
+
+########################################
+# %%
+# Generate a multiple random tiles
+rand_sequence = []
+if batch_flag:
+    # 0 to rand_seed
+    rand_sequence = range(rand_seed + 1)
+else:
+    # Just rand_seed
+    rand_sequence = [rand_seed]
+
+# for idx in rand_sequence:
+#     generate_tile(idx)
 
 # %%

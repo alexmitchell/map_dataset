@@ -86,7 +86,11 @@ class BinaryLandcoverDataset(Dataset):
     def __len__(self):
         return self.epoch_size
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, float]:
+    def __getitem__(
+            self,
+            idx: int,
+        ) -> tuple[torch.Tensor, np.ndarray, float, float]:
+
         # Set up a random number generator using the index as a seed
         rng = np.random.default_rng(idx)
 
@@ -98,6 +102,10 @@ class BinaryLandcoverDataset(Dataset):
         # away from the edges of the aoi
         max_tile_distance = np.sqrt(2) * tile_width / 2
         target_zone_shp = self.aoi_shp.buffer(-max_tile_distance)
+
+        # Check that there is a target zone to sample from
+        if target_zone_shp.is_empty:
+            raise ValueError("Target zone is empty. Tile width too large.")
 
         # Pick a random point in the target zone
         target_point = sample_point_in_polygon(target_zone_shp, rng)
