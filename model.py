@@ -9,10 +9,10 @@ unet = UNet2DModel(
         # no attention, and small latent representations.  Our data is pretty 
         # simple, so I think this might work, but we have plenty of room to 
         # make the model more complicated as necessary.
-        down_block_types=['DownBlock2D', 'DownBlock2D'],
-        up_block_types=['UpBlock2D', 'UpBlock2D'],
-        block_out_channels=[16, 32],
-        norm_num_groups=8,
+        down_block_types=['DownBlock2D', 'AttnDownBlock2D', 'AttnDownBlock2D'],
+        up_block_types=['AttnUpBlock2D', 'AttnUpBlock2D', 'UpBlock2D'],
+        block_out_channels=[64, 128, 256],
+        norm_num_groups=32,
 
         # Our class labels give the fraction of the map that is land.  This is 
         # conceptually similar to the timestep; e.g. it's a floating point 
@@ -27,8 +27,10 @@ unet = UNet2DModel(
 
 if __name__ == '__main__':
     import torch
+    import torchlens as tl
+
     x = torch.randn(1, 1, 32, 32)
     t = torch.randn(1)
     y = torch.randn(1)
 
-    unet(x, t, y)
+    tl.show_model_graph(unet, [x, t, y])

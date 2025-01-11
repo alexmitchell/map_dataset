@@ -17,6 +17,7 @@ dependencies = [
     "pycrs>=1.0.2",
     "rasterio>=1.4.3",
     "setuptools>=75.6.0",
+    "torch-deterministic>=0.1.0",
     "torchmetrics>=1.6.1",
 ]
 

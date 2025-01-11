@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from model import unet
 from landcover_training_dataset import BinaryLandcoverDataset
 from torchmetrics.image import TotalVariation
+from torch_deterministic import InfiniteSampler, collate_rngs
 from pathlib import Path
 from tqdm import tqdm
 
@@ -24,30 +25,29 @@ class DiffusionTask(L.LightningModule):
         self.scheduler = DDPMScheduler(num_train_timesteps=1000)
         self.optimizer = Adam(model.parameters())
         self.loss = MSELoss()
-        self.tv = TotalVariation(reduction='mean')
+        self.total_var = TotalVariation(reduction='mean')
 
     def configure_optimizers(self):
         return self.optimizer
 
     def forward(self, x):
-        x_clean, noise, t, label = x
+        rngs, x_clean, land_frac = x
         n = self.scheduler.config.num_train_timesteps
 
         # The model expects images to be 32-bit floats in [0, 1].
         x_clean = x_clean.to(dtype=torch.float32)
-        noise = noise.to(dtype=torch.float32)
 
-        # The dataset gives us the timestep as a float in [0, 1), so we have to 
-        # scale it up and convert it to an integer.
-        t = (t * n).to(dtype=int)
+        noise = rngs.normal(size=x_clean.shape[1:])
+        noise = noise.to(dtype=torch.float32, device=x_clean.device)
 
         # Make the land fraction label comparable in scale to the timestep, 
         # since they're both embedded in the same way.
-        label *= n
+        t = rngs.integers(n).to(device=x_clean.device)
+        land_frac *= n
 
         x_noisy = self.scheduler.add_noise(x_clean, noise, t)
 
-        noise_pred = self.model(x_noisy, t, label).sample
+        noise_pred = self.model(x_noisy, t, land_frac).sample
 
         return self.loss(noise_pred, noise)
 
@@ -72,16 +72,16 @@ class DiffusionTask(L.LightningModule):
                 rng=rng,
                 model=self.model,
                 scheduler=self.scheduler,
-                n=1024,
+                n=64,
                 label=500,
         )
 
-        self.tv.update(images)
-        self.log('gen/tv', self.tv.compute())
-        self.tv.reset()
+        self.total_var.update(images)
+        self.log('gen/total_var', self.total_var.compute())
+        self.total_var.reset()
 
-        images = numpy_to_pil(images[:16].cpu().permute(0, 2, 3, 1).numpy())
-        image_grid = make_image_grid(images, rows=4, cols=4)
+        images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
+        image_grid = make_image_grid(images, rows=8, cols=8)
 
         if self.trainer.logger.log_dir:
             image_dir = Path(self.trainer.logger.log_dir) / 'gen_images'
@@ -116,14 +116,21 @@ class MapData(L.LightningDataModule):
                     aoi_filepath=root/'greece'/'aoi.geojson',
                     projected_crs='EPSG:2100',
                     landcover_polygons_filepath=root/'landcover_100m_binary_vector.geojson',
-                    tile_width_range_m=(1e2, 1e5),
+                    tile_width_range_m=(1e4, 1e5),
                     tile_raster_size_px=resolution_px,
                     epoch_size=epoch_sizes[split],
+            )
+            sampler = InfiniteSampler(
+                    epoch_size=len(dataset),
+                    increment_across_epochs=(split == 'train'),
+                    shuffle=True,
             )
 
             return DataLoader(
                     dataset=dataset,
+                    sampler=sampler,
                     batch_size=batch_size,
+                    collate_fn=collate_rngs,
                     num_workers=get_num_workers(num_workers),
             )
 
@@ -173,7 +180,7 @@ data = MapData(
         resolution_px=32,
         train_epoch_size=2**17,
         val_epoch_size=2**14,
-        batch_size=64,
+        batch_size=128,
 )
 
 if __name__ == '__main__':

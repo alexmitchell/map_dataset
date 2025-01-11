@@ -1200,6 +1200,7 @@ dependencies = [
     { name = "pycrs" },
     { name = "rasterio" },
     { name = "setuptools" },
+    { name = "torch-deterministic" },
     { name = "torchmetrics" },
 ]
 
@@ -1229,6 +1230,7 @@ requires-dist = [
     { name = "setuptools", specifier = ">=75.6.0" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "map-dataset", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cu124'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cu124", conflict = { package = "map-dataset", extra = "cu124" } },
+    { name = "torch-deterministic", specifier = ">=0.1.0" },
     { name = "torchmetrics", specifier = ">=1.6.1" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.20.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "map-dataset", extra = "cpu" } },
     { name = "torchvision", marker = "extra == 'cu124'", specifier = ">=0.20.1", index = "https://download.pytorch.org/whl/cu124", conflict = { package = "map-dataset", extra = "cu124" } },
@@ -1340,6 +1342,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979 },
+]
+
+[[package]]
+name = "more-itertools"
+version = "10.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/78/65922308c4248e0eb08ebcbe67c95d48615cc6f27854b6f2e57143e9178f/more-itertools-10.5.0.tar.gz", hash = "sha256:5482bfef7849c25dc3c6dd53a6173ae4795da2a41a80faea6700d9f5846c5da6", size = 121020 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/7e/3a64597054a70f7c86eb0a7d4fc315b8c1ab932f64883a297bdffeb5f967/more_itertools-10.5.0-py3-none-any.whl", hash = "sha256:037b0d3203ce90cca8ab1defbbdac29d5f993fc20131f3664dc8d6acfa872aef", size = 60952 },
 ]
 
 [[package]]
@@ -2169,6 +2180,15 @@ wheels = [
 ]
 
 [[package]]
+name = "reprfunc"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/74/c13f83d67167769333ab770bf10a8e389915a77e4196a225f3374d4edf79/reprfunc-0.2.0.tar.gz", hash = "sha256:7ef2df08375b0945a7b367fcc4416c93d5caaffa772cd151b8e7fa9dddc93516", size = 13214 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/48/863ac53a1f34008b2d2de334b78ca5611908a69a29397b5e5c2f6b28782a/reprfunc-0.2.0-py2.py3-none-any.whl", hash = "sha256:f39d33150df758afb34ae9b7c284835cb1023fa9d7e65a94fcc55854d9149138", size = 5477 },
+]
+
+[[package]]
 name = "requests"
 version = "2.32.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2452,6 +2472,23 @@ wheels = [
     { url = "https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp312-cp312-linux_x86_64.whl", hash = "sha256:bf6484bfe5bc4f92a4a1a1bf553041505e19a911f717065330eb061afe0e14d7" },
     { url = "https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp312-cp312-win_amd64.whl", hash = "sha256:3c3f705fb125edbd77f9579fa11a138c56af8968a10fc95834cdd9fdf4f1f1a6" },
     { url = "https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp313-cp313-linux_x86_64.whl", hash = "sha256:e9bebf91ede89267577911da4b0709ac6113a0cff6a1c2202c046b1ec2a51601" },
+]
+
+[[package]]
+name = "torch-deterministic"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "more-itertools" },
+    { name = "numpy" },
+    { name = "reprfunc" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-11-map-dataset-cpu'" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-map-dataset-cpu' and extra == 'extra-11-map-dataset-cu124') or (extra != 'extra-11-map-dataset-cpu' and extra != 'extra-11-map-dataset-cu124')" },
+    { name = "torch", version = "2.5.1+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "extra == 'extra-11-map-dataset-cu124'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/14/98/307254729418957338cb3fe90fb314019a6272dd38adc528f4065831132d/torch_deterministic-0.1.0.tar.gz", hash = "sha256:849f799565ab13a6334dbc91dd0b8c198b23722f65a36cc468d54eb6061ebc8b", size = 5661 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/d5/978c9c1ad15ebfee6081f5a5a7329b7d725c9d2fe4836ca3dcd1fc2c328f/torch_deterministic-0.1.0-py3-none-any.whl", hash = "sha256:405c37b64e997d44cdaa7ce72055a3e7470386ab19afc8a9e23296572c9ed655", size = 6306 },
 ]
 
 [[package]]

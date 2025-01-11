@@ -164,22 +164,11 @@ class BinaryLandcoverDataset(Dataset):
         # channel dimension.
         tile_raster = rearrange(tile_raster, 'w h -> 1 w h')
 
-        # The following lines sample some random values that will be needed by 
-        # the diffusion model training process.  I don't think it really makes 
-        # sense for the dataset to sample these values, since they don't have 
-        # anything to do with the data itself.  I'd prefer for the dataset to 
-        # return the RNG it instantiated, so that the training loop could 
-        # sample whatever random values it needs.  But this would requires some 
-        # supporting code that I haven't made available in a nice package yet, 
-        # so for now it's easiest to just sample everything here.
-        noise = rng.normal(size=tile_raster.shape)
-        timestep = rng.uniform()
-
         # Calculate a metric for the tile
         # In this case the percent of the tile that is land
         land_fraction = tile_raster.sum() / tile_raster.size
 
-        return tile_raster, noise, timestep, land_fraction
+        return rng, tile_raster, land_fraction
 
 def sample_point_in_polygon(
     target_zone_shp: shp.Polygon,
