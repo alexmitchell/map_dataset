@@ -50,8 +50,9 @@ if running_in_cli:
 else:
     # Running in a jupyter notebook environment (e.g. interactive mode)
     # Use hardcoded random seed
-    rand_seed = 28
+    rand_seed = 0
     print(f"Using hardcoded random seed: {rand_seed}")
+    batch_flag = False
 
 # Note: All files exported from earth engine seem to be in EPSG:4326?
 
@@ -130,8 +131,9 @@ pytorch_dataset = td.BinaryLandcoverDataset(
     projected_crs=projected_crs,
     landcover_polygons_filepath=landcover_polygons_filepath,
     # landcover_lookup_filepath=landcover_lookup_filepath,
-    tile_width_range=tile_width_range,
-    tile_raster_size=tile_raster_size,
+    tile_width_range_m=tile_width_range,
+    tile_raster_size_px=tile_raster_size,
+    epoch_size=100,
 )
 
 
@@ -301,7 +303,12 @@ print("Finished generating tile in script")
 
 # Get the random tile
 print("Getting random tile from pytorch dataset")
-pytorch_tile, pytorch_land_percent = pytorch_dataset[idx]
+(
+    pytorch_tile,
+    pytorch_noise,
+    pytorch_timestep,
+    pytorch_land_percent,
+) = pytorch_dataset[idx]
 
 
 # %%
@@ -373,9 +380,8 @@ else:
 if not running_in_cli:
     print("Plotting pytorch tile")
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(
-        np.flipud(pytorch_tile), cmap="gray", origin="lower", vmin=0, vmax=1
-    )
+    tile = np.flipud(pytorch_tile.squeeze())
+    ax.imshow(tile, cmap="gray", origin="lower", vmin=0, vmax=1)
 
     ax.set_title(
         "Pytorch tile\n"
@@ -389,7 +395,7 @@ if not running_in_cli:
 # %%
 # Check that the two tiles are equal
 print("Checking that the two tiles are equal")
-np.testing.assert_array_equal(tile_raster, pytorch_tile)
+np.testing.assert_array_equal(tile_raster, pytorch_tile.squeeze())
 print("Tiles are equal!")
 
 ########################################
@@ -405,3 +411,5 @@ else:
 
 # for idx in rand_sequence:
 #     generate_tile(idx)
+
+# %%

@@ -5,21 +5,26 @@ import numpy as np
 import rasterio as rio
 import shapely as shp
 import torch
+
 from rasterio import features as rio_features
 from torch.utils.data import Dataset
+from einops import rearrange
 
 
 class BinaryLandcoverDataset(Dataset):
     def __init__(
         self,
+        *,
         aoi_filepath: Path,
         projected_crs: str,
         landcover_polygons_filepath: Path,
         # landcover_lookup_filepath: Path,
-        tile_width_range: tuple[int | float, int | float],
-        tile_raster_size: int = 32,
+        tile_width_range_m: tuple[int | float, int | float],
+        tile_raster_size_px: int = 32,
+        epoch_size: int,
     ):
-        """Set up a dataset for binary landcover classification
+        """
+        Set up a dataset for binary landcover classification
 
         Args:
             aoi_filepath:
@@ -34,13 +39,12 @@ class BinaryLandcoverDataset(Dataset):
                 Path to the GeoJSON file containing polygons representing the
                 landcover classes. The file must have a crs of EPSG:4326 and
                 will be converted to the projected_crs for calculations.
-            tile_width_range:
+            tile_width_range_m:
                 A tuple containing the minimum and maximum width of the tiles
                 to extract. The width is in meters.
-            tile_raster_size:
+            tile_raster_size_px:
                 The size (in pixels) of the final square raster images. Once a
                 tile area has been selected, the tile is resampled to this size.
-
         """
 
         # NOTE: landcover lookup doesn't seem necessary. Leaving out for now
@@ -53,8 +57,9 @@ class BinaryLandcoverDataset(Dataset):
         #         class.
 
         self.projected_crs = projected_crs
-        self.tile_width_range = tile_width_range
-        self.tile_raster_size = tile_raster_size
+        self.tile_width_range_m = tile_width_range_m
+        self.tile_raster_size_px = tile_raster_size_px
+        self.epoch_size = int(epoch_size)
 
         # TODO: Approximate tile width range from the aoi dimensions?
 
@@ -79,58 +84,18 @@ class BinaryLandcoverDataset(Dataset):
         )
 
     def __len__(self):
-        return 10**6
+        return self.epoch_size
 
-    def get_random_point_in_polygon(
-        self,
-        target_zone_shp: shp.Polygon,
-        rng: np.random.Generator,
-    ) -> shp.Point:
-        """Get a random point inside a polygon
+    def __getitem__(
+            self,
+            idx: int,
+        ) -> tuple[torch.Tensor, np.ndarray, float, float]:
 
-        Args:
-            target_zone_shp:
-                The shapely polygon to sample from.
-            rng:
-                A numpy random number generator object
-
-        Returns:
-            A shapely Point object that is inside the target zone
-        """
-
-        # Pick a random point inside the target zone
-        # This will be the center of the tile
-        # Surprisingly, guess-and-check appears to be the best way to do it
-        x_range = target_zone_shp.bounds[::2]
-        y_range = target_zone_shp.bounds[1::2]
-        rand_point = None
-        max_attempts = 100
-        n_attempts = 0
-        while rand_point is None:
-            candidate_point = shp.geometry.Point(
-                rng.uniform(*x_range),
-                rng.uniform(*y_range),
-            )
-            if target_zone_shp.contains(candidate_point):
-                rand_point = candidate_point
-
-            # Track number of attempts as a failsafe
-            n_attempts += 1
-            if n_attempts == max_attempts:
-                raise RuntimeError(
-                    "Failed to find a random point in the target zone after "
-                    f"{max_attempts} attempts. It is highly probable something "
-                    "is wrong with the aoi/target zone."
-                )
-
-        return rand_point
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, float]:
         # Set up a random number generator using the index as a seed
         rng = np.random.default_rng(idx)
 
         # Pick a random tile width
-        tile_width = rng.integers(*self.tile_width_range)
+        tile_width = rng.integers(*self.tile_width_range_m)
 
         # Figure out a target zone that will fit a tile with any rotation
         # This is a polygon inside the aoi that is at least max_tile_distance
@@ -143,7 +108,7 @@ class BinaryLandcoverDataset(Dataset):
             raise ValueError("Target zone is empty. Tile width too large.")
 
         # Pick a random point in the target zone
-        target_point = self.get_random_point_in_polygon(target_zone_shp, rng)
+        target_point = sample_point_in_polygon(target_zone_shp, rng)
 
         # Pick a random rotation angle
         rotation_angle = rng.uniform(0, 360)
@@ -168,34 +133,95 @@ class BinaryLandcoverDataset(Dataset):
         )
 
         # Rasterize the tile polygons and transform to the raster size
-        tile_size = self.tile_raster_size
-        rio_transform = rio.transform.from_bounds(
-            *square_bounds,
-            tile_size,
-            tile_size,
-        )
+        tile_size_px = self.tile_raster_size_px
         geom_mapping = [
             (geom, value)
             for value, geom in tile_polygons.items()
             if not geom.is_empty
         ]
+
         if not geom_mapping:
-            raise ValueError("No landcover data in tile")
-        tile_raster = rio_features.rasterize(
-            geom_mapping,
-            out_shape=(tile_size, tile_size),
-            transform=rio_transform,
-            all_touched=False,
-            fill=0,
-            default_value=1,
-            dtype="uint8",
-        )
+            tile_raster = np.zeros(
+                    (tile_size_px, tile_size_px),
+                    dtype='uint8',
+            )
+        else:
+            tile_raster = rio_features.rasterize(
+                geom_mapping,
+                out_shape=(tile_size_px, tile_size_px),
+                transform=rio.transform.from_bounds(
+                    *square_bounds,
+                    tile_size_px,
+                    tile_size_px,
+                ),
+                all_touched=False,
+                fill=0,
+                default_value=1,
+                dtype="uint8",
+            )
+
+        # Even though we only have one channel, the model still expects a 
+        # channel dimension.
+        tile_raster = rearrange(tile_raster, 'w h -> 1 w h')
+
+        # The following lines sample some random values that will be needed by 
+        # the diffusion model training process.  I don't think it really makes 
+        # sense for the dataset to sample these values, since they don't have 
+        # anything to do with the data itself.  I'd prefer for the dataset to 
+        # return the RNG it instantiated, so that the training loop could 
+        # sample whatever random values it needs.  But this would requires some 
+        # supporting code that I haven't made available in a nice package yet, 
+        # so for now it's easiest to just sample everything here.
+        noise = rng.normal(size=tile_raster.shape)
+        timestep = rng.uniform()
 
         # Calculate a metric for the tile
         # In this case the percent of the tile that is land
-        land_percent = tile_raster.sum() / tile_raster.size * 100
+        land_fraction = tile_raster.sum() / tile_raster.size
 
-        # Convert the tile raster to a tensor
-        tile_tensor = torch.tensor(tile_raster, dtype=torch.uint8)
+        return tile_raster, noise, timestep, land_fraction
 
-        return tile_tensor, land_percent
+def sample_point_in_polygon(
+    target_zone_shp: shp.Polygon,
+    rng: np.random.Generator,
+) -> shp.Point:
+    """
+    Get a random point inside a polygon
+
+    Args:
+        target_zone_shp:
+            The shapely polygon to sample from.
+        rng:
+            A numpy random number generator object
+
+    Returns:
+        A shapely Point object that is inside the target zone
+    """
+
+    # Pick a random point inside the target zone
+    # This will be the center of the tile
+    # Surprisingly, guess-and-check appears to be the best way to do it
+    x_range = target_zone_shp.bounds[::2]
+    y_range = target_zone_shp.bounds[1::2]
+    rand_point = None
+    max_attempts = 100
+    n_attempts = 0
+    while rand_point is None:
+        candidate_point = shp.geometry.Point(
+            rng.uniform(*x_range),
+            rng.uniform(*y_range),
+        )
+        if target_zone_shp.contains(candidate_point):
+            rand_point = candidate_point
+
+        # Track number of attempts as a failsafe
+        n_attempts += 1
+        if n_attempts == max_attempts:
+            raise RuntimeError(
+                "Failed to find a random point in the target zone after "
+                f"{max_attempts} attempts. It is highly probable something "
+                "is wrong with the aoi/target zone."
+            )
+
+    return rand_point
+
